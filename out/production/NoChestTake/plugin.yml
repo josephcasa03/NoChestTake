@@ -1,0 +1,6 @@
+name: NoChestTake
+api-version: 1.21
+version: 0.0
+author: josephcasanovac, CKF
+description: Plugins crée pour protégé les bloc.
+main: fr.josephcasanovac.nochesttake.Main
