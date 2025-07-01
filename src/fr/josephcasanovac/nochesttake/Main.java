@@ -26,7 +26,6 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.Arrays;
 
 public class Main extends JavaPlugin implements Listener {
 
@@ -34,44 +33,27 @@ public class Main extends JavaPlugin implements Listener {
     private final Map<Location, Set<UUID>> signAuthorizedPlayersMap = new HashMap<>();
 
     private static final Set<Material> protectableBlocks = Set.of(
-            Material.CHEST,
-            Material.TRAPPED_CHEST,
-            Material.FURNACE,
-            Material.SMOKER,
-            Material.BLAST_FURNACE,
+            Material.CHEST, Material.TRAPPED_CHEST,
+            Material.FURNACE, Material.SMOKER, Material.BLAST_FURNACE,
 
-            Material.OAK_FENCE_GATE,
-            Material.BIRCH_FENCE_GATE,
-            Material.SPRUCE_FENCE_GATE,
-            Material.JUNGLE_FENCE_GATE,
-            Material.ACACIA_FENCE_GATE,
-            Material.DARK_OAK_FENCE_GATE,
-            Material.CRIMSON_FENCE_GATE,
-            Material.WARPED_FENCE_GATE,
+            Material.OAK_FENCE_GATE, Material.BIRCH_FENCE_GATE, Material.SPRUCE_FENCE_GATE,
+            Material.JUNGLE_FENCE_GATE, Material.ACACIA_FENCE_GATE, Material.DARK_OAK_FENCE_GATE,
+            Material.CRIMSON_FENCE_GATE, Material.WARPED_FENCE_GATE,
 
-            Material.OAK_DOOR,
-            Material.BIRCH_DOOR,
-            Material.SPRUCE_DOOR,
-            Material.JUNGLE_DOOR,
-            Material.ACACIA_DOOR,
-            Material.DARK_OAK_DOOR,
-            Material.CRIMSON_DOOR,
-            Material.WARPED_DOOR,
+            Material.OAK_DOOR, Material.BIRCH_DOOR, Material.SPRUCE_DOOR,
+            Material.JUNGLE_DOOR, Material.ACACIA_DOOR, Material.DARK_OAK_DOOR,
+            Material.CRIMSON_DOOR, Material.WARPED_DOOR,
 
-            Material.OAK_TRAPDOOR,
-            Material.BIRCH_TRAPDOOR,
-            Material.SPRUCE_TRAPDOOR,
-            Material.JUNGLE_TRAPDOOR,
-            Material.ACACIA_TRAPDOOR,
-            Material.DARK_OAK_TRAPDOOR,
-            Material.CRIMSON_TRAPDOOR,
-            Material.WARPED_TRAPDOOR
+            Material.OAK_TRAPDOOR, Material.BIRCH_TRAPDOOR, Material.SPRUCE_TRAPDOOR,
+            Material.JUNGLE_TRAPDOOR, Material.ACACIA_TRAPDOOR, Material.DARK_OAK_TRAPDOOR,
+            Material.CRIMSON_TRAPDOOR, Material.WARPED_TRAPDOOR
     );
 
     @Override
     public void onEnable() {
         getServer().getPluginManager().registerEvents(this, this);
         loadProtectedBlocks();
+        startProtectionScanner();
     }
 
     @Override
@@ -84,40 +66,77 @@ public class Main extends JavaPlugin implements Listener {
 
         for (World world : Bukkit.getWorlds()) {
             for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
-                for (BlockState state : chunk.getTileEntities()) {
-                    if (state instanceof Sign sign) {
-                        String firstLine = ChatColor.stripColor(sign.getLine(0));
-                        if ("[PRIVATE]".equalsIgnoreCase(firstLine)) {
-                            Block signBlock = sign.getBlock();
-                            Block supportingBlock = getSupportingBlock(signBlock);
-                            if (supportingBlock != null && protectableBlocks.contains(supportingBlock.getType())) {
-                                addProtection(supportingBlock, sign);
-                            } else {
-                                new BukkitRunnable() {
-                                    @Override
-                                    public void run() {
-                                        if (signBlock.getState() instanceof Sign s) {
-                                            s.setLine(0, "");
-                                            s.setLine(1, "");
-                                            s.setLine(2, "");
-                                            s.setLine(3, "");
-                                            s.update();
-                                        }
-                                    }
-                                }.runTaskLater(this, 1L);
+                scanChunkForPrivateSigns(chunk);
+            }
+        }
+    }
+
+    private void startProtectionScanner() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                Map<Location, Location> currentProtectedBlocks = new HashMap<>();
+                Map<Location, Set<UUID>> currentAuthorizedPlayers = new HashMap<>();
+
+                for (World world : Bukkit.getWorlds()) {
+                    for (org.bukkit.Chunk chunk : world.getLoadedChunks()) {
+                        scanChunkForPrivateSigns(chunk, currentProtectedBlocks, currentAuthorizedPlayers);
+                    }
+                }
+
+                protectedBlockToSignMap.clear();
+                protectedBlockToSignMap.putAll(currentProtectedBlocks);
+
+                signAuthorizedPlayersMap.clear();
+                signAuthorizedPlayersMap.putAll(currentAuthorizedPlayers);
+            }
+        }.runTaskTimer(this, 20L, 20L);
+    }
+
+    private void scanChunkForPrivateSigns(org.bukkit.Chunk chunk) {
+        scanChunkForPrivateSigns(chunk, protectedBlockToSignMap, signAuthorizedPlayersMap);
+    }
+
+    private void scanChunkForPrivateSigns(org.bukkit.Chunk chunk,
+                                          Map<Location, Location> tempProtectedBlockToSignMap,
+                                          Map<Location, Set<UUID>> tempSignAuthorizedPlayersMap) {
+        for (BlockState state : chunk.getTileEntities()) {
+            if (state instanceof Sign sign) {
+                String firstLine = ChatColor.stripColor(sign.getLine(0));
+                if ("[PRIVATE]".equalsIgnoreCase(firstLine)) {
+                    Block signBlock = sign.getBlock();
+                    Block supportingBlock = getSupportingBlock(signBlock);
+
+                    tempProtectedBlockToSignMap.put(signBlock.getLocation(), sign.getLocation());
+
+                    if (supportingBlock != null && protectableBlocks.contains(supportingBlock.getType())) {
+                        addProtectionInternal(supportingBlock, sign, tempProtectedBlockToSignMap, tempSignAuthorizedPlayersMap);
+                    } else {
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                if (signBlock.getState() instanceof Sign s) {
+                                    s.setLine(0, "");
+                                    s.setLine(1, "");
+                                    s.setLine(2, "");
+                                    s.setLine(3, "");
+                                    s.update();
+                                }
                             }
-                        }
+                        }.runTaskLater(this, 1L);
                     }
                 }
             }
         }
     }
 
-    private void addProtection(Block protectedBlock, Sign sign) {
+    private void addProtectionInternal(Block protectedBlock, Sign sign,
+                                       Map<Location, Location> blockMap,
+                                       Map<Location, Set<UUID>> playerMap) {
         Location signLoc = sign.getLocation();
         Location blockLoc = protectedBlock.getLocation();
 
-        protectedBlockToSignMap.put(blockLoc, signLoc);
+        blockMap.put(blockLoc, signLoc);
 
         if (protectedBlock.getType() == Material.CHEST || protectedBlock.getType() == Material.TRAPPED_CHEST) {
             BlockData data = protectedBlock.getBlockData();
@@ -125,7 +144,7 @@ public class Main extends JavaPlugin implements Listener {
                 if (chestData.getType() != Chest.Type.SINGLE) {
                     Block otherHalf = getOtherHalfOfDoubleChest(protectedBlock, chestData);
                     if (otherHalf != null) {
-                        protectedBlockToSignMap.put(otherHalf.getLocation(), signLoc);
+                        blockMap.put(otherHalf.getLocation(), signLoc);
                     }
                 }
             }
@@ -137,8 +156,8 @@ public class Main extends JavaPlugin implements Listener {
                 Block bottomHalf = doorData.getHalf() == Door.Half.TOP ? protectedBlock.getRelative(BlockFace.DOWN) : protectedBlock;
                 Block topHalf = doorData.getHalf() == Door.Half.BOTTOM ? protectedBlock.getRelative(BlockFace.UP) : protectedBlock;
 
-                protectedBlockToSignMap.put(bottomHalf.getLocation(), signLoc);
-                protectedBlockToSignMap.put(topHalf.getLocation(), signLoc);
+                blockMap.put(bottomHalf.getLocation(), signLoc);
+                blockMap.put(topHalf.getLocation(), signLoc);
             }
         }
 
@@ -169,7 +188,7 @@ public class Main extends JavaPlugin implements Listener {
                 }
             }
         }
-        signAuthorizedPlayersMap.put(signLoc, authorizedPlayers);
+        playerMap.put(signLoc, authorizedPlayers);
     }
 
     private void removeProtection(Location signLocation) {
@@ -229,7 +248,6 @@ public class Main extends JavaPlugin implements Listener {
     }
 
     private boolean isPrivateSign(Block block) {
-        // This method checks if a block is a [PRIVATE] sign.
         if (block == null || !(block.getState() instanceof Sign)) {
             return false;
         }
@@ -325,18 +343,15 @@ public class Main extends JavaPlugin implements Listener {
                     }
 
                     Set<UUID> currentAuthorizedPlayers = new HashSet<>();
+                    boolean hasValidPlayer = false;
                     for (int i = 1; i <= 3; i++) {
                         String playerNameOnSign = ChatColor.stripColor(sign.getLine(i));
                         if (playerNameOnSign != null && !playerNameOnSign.isEmpty()) {
                             UUID foundUuid = null;
-
-                            for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
-                                if (onlinePlayer.getName().equalsIgnoreCase(playerNameOnSign)) {
-                                    foundUuid = onlinePlayer.getUniqueId();
-                                    break;
-                                }
+                            Player onlinePlayer = Bukkit.getPlayerExact(playerNameOnSign);
+                            if (onlinePlayer != null) {
+                                foundUuid = onlinePlayer.getUniqueId();
                             }
-
                             if (foundUuid == null) {
                                 for (org.bukkit.OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers()) {
                                     if (offlinePlayer.getName() != null && offlinePlayer.getName().equalsIgnoreCase(playerNameOnSign)) {
@@ -348,33 +363,21 @@ public class Main extends JavaPlugin implements Listener {
 
                             if (foundUuid != null) {
                                 currentAuthorizedPlayers.add(foundUuid);
+                                hasValidPlayer = true;
                             }
                         }
                     }
 
-                    boolean shouldBreakSign = false;
-
-                    if (currentAuthorizedPlayers.isEmpty()) {
-                        shouldBreakSign = true;
-                    }
-
-                    if (!shouldBreakSign && currentAuthorizedPlayers.size() == 1) {
-                        UUID singleAuthorizedUUID = currentAuthorizedPlayers.iterator().next();
-                        Player singleAuthorizedPlayer = Bukkit.getPlayer(singleAuthorizedUUID);
-
-                        if (singleAuthorizedPlayer == null) {
-                            shouldBreakSign = true;
-                        }
-                    }
-
-                    if (shouldBreakSign) {
+                    if (!hasValidPlayer) {
                         removeProtection(sign.getLocation());
                         signBlock.setType(Material.AIR);
                     } else {
-                        addProtection(supportingBlock, sign);
+                        // The periodic scanner will pick up the updated sign and re-add/update its protection
+                        // and authorized players. We don't call `addProtectionInternal` directly here
+                        // to avoid potential race conditions with the scanner.
                     }
                 }
-            }.runTaskLater(this, 1L);
+            }.runTaskLater(this, 2L);
         } else {
             if (isPrivateSign(signBlock)) {
                 if (isPlayerAuthorized(signBlock.getLocation(), player)) {
@@ -397,11 +400,7 @@ public class Main extends JavaPlugin implements Listener {
         }
 
         Block supportingBlock = getSupportingBlock(placedBlock);
-        if (supportingBlock == null) {
-            return;
-        }
-
-        if (!protectableBlocks.contains(supportingBlock.getType())) {
+        if (supportingBlock == null || !protectableBlocks.contains(supportingBlock.getType())) {
             return;
         }
 
@@ -423,8 +422,6 @@ public class Main extends JavaPlugin implements Listener {
                         sign.setLine(2, "");
                         sign.setLine(3, "");
                         sign.update();
-
-                        addProtection(supportingBlock, sign);
                     }
                 }.runTaskLater(Main.this, 4L);
             }
